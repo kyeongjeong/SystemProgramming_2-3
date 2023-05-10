@@ -1,15 +1,15 @@
 ///////////////////////////////////////////////////////////////////////////////////////
-// File Name    : 2021202078_web_server.c                                            //
-// Date         : 2023/05/03                                                         //
+// File Name    : 2021202078_adv_server.c                                            //
+// Date         : 2023/05/10                                                         //
 // OS           : Ubuntu 16.04.5 Desktop 64bits                                      //
 // Author       : Choi Kyeong Jeong                                                  //
 // Student ID   : 2021202078                                                         //
 // --------------------------------------------------------------------------------- //
-// Title        : System Programming Assignment 2-2                                  //
-// Descriptions : The results of Assignment 2-2 are transmitted to a web browser     //
-//                through a server in response to the client's requests. In this     //
-//                case, additional results should be sent depending on the directory //
-//                and file clicked.                                                  //
+// Title        : System Programming Assignment 2-3                                  //
+// Descriptions : Modify the result of Assignment 2-2 to allow multiple connections  //
+//                and access control. The record of multiple connections should be   //
+//                displayed through the "history" output, and access control should  //
+//                be carried out by allowing only the IP addresses listed in a file. //                                            //
 ///////////////////////////////////////////////////////////////////////////////////////
 
 #define _GNU_SOURCE
@@ -17,7 +17,7 @@
 #define MAX_LENGTH 1000
 #define URL_LEN 256
 #define BUFSIZE 1024
-#define PORTNO 44444
+#define PORTNO 40000
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,7 +82,7 @@ int main() {
         return 0; //프로그램 종료
     }
 
-    bzero((char*)&server_addr, sizeof(server_addr));
+    bzero((char*)&server_addr, sizeof(server_addr)); //server_addr 메모리 블록을 0으로 초기화
     server_addr.sin_family = AF_INET; //주소 체계를 IPv4로 설정
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY); //모든 IP 주소를 허용
     server_addr.sin_port = htons(PORTNO); //포트 번호 설정
@@ -94,7 +94,6 @@ int main() {
 
     listen(socket_fd, 5); //클라이언트의 연결 요청 대기
 
-    No = 0;
     while(1) {
         
         struct in_addr inet_clinet_address; //클라이언트의 주소
@@ -119,7 +118,7 @@ int main() {
         if (pid == 0) { // 자식 프로세스
 
             printf("========= New Client ============\nIP : %s\n Port : %d\n=================================\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port)); // 연결된 클라이언트의 IP 주소 및 포트 번호 출력
-            ++request;  
+            ++request; //누적 접속 기록 개수 증가
 
             inet_clinet_address.s_addr = client_addr.sin_addr.s_addr; //클라이언트 주소 정보 저장
             read(client_fd, buf, BUFSIZE); //요청 메세지 read
@@ -135,7 +134,7 @@ int main() {
             if(strcmp(url, "/favicon.ico") == 0) //url이 /favicon.ico인 경우 무시
                 continue;
 
-            if(isAccesible(inet_ntoa(client_addr.sin_addr), response_header, client_fd) == 0)
+            if(isAccesible(inet_ntoa(client_addr.sin_addr), response_header, client_fd) == 0) //접근 권한이 없는 IP인 경우 무시
                 continue;
             
             sendResponse(url, response_header, isNotStart, client_fd); //아닌 경우, response 메세지 입력 및 출력
@@ -144,21 +143,20 @@ int main() {
             close(client_fd);
             printf("====== Disconnected Client ======\nIP : %s\n Port : %d\n=================================\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port)); // 연결된 클라이언트의 IP 주소 및 포트 번호 출력  
             
-            printf("time(NULL) : %ld\n", time(NULL));
-            if (time(NULL) % 10 == 0) 
-                printServerHistory();
+            if (time(NULL) % 10 == 0) //alarm으로 바꿔야 할 부분
+                printServerHistory(); //connect 기록 출력
             exit(0); // 자식 프로세스 종료
         }
 
         else if (pid < 0) { // 프로세스 생성 실패 시
-            printf("Server : fork failed\n");
+            printf("Server : fork failed\n"); //실패 문구 출력
             continue;
         }
 
-        else {
+        else { //부모 프로세스인 경우
             int *status;
             close(client_fd);
-            wait(status);
+            wait(status); //wait
         }
 
         close(client_fd);
@@ -168,66 +166,99 @@ int main() {
     return 0; //프로그램 종료
 }
 
+///////////////////////////////////////////////////////////////////////////////////////
+// isAccessible                                                                      //
+// --------------------------------------------------------------------------------- //
+// Input: char* inputIP -> The IP address that the client is attempting to access.   //
+//        char* response_header -> Response message header from the server           //
+//        int client_fd -> File descriptor of the client                             //
+// output:                                                                           //
+// purpose: Classify whether the address entered as a URL is a directory, plain file // 
+//          , or image, then perform file read to create a response message and send //
+//          it with a header.                                                        //
+///////////////////////////////////////////////////////////////////////////////////////
 int isAccesible(char* inputIP, char* response_header, int client_fd) {
 
-    FILE* file = fopen("accessible.usr", "r");
-    char accessIDs[MAX_LENGTH];
+    FILE* file = fopen("accessible.usr", "r"); //허용 가능한 IP가 적힌 파일 open
+    char accessIDs[MAX_LENGTH]; //IP를 읽어올 문자열
 
-    while(fgets(accessIDs, MAX_LENGTH, file) != NULL) {
+    char *token = strtok(inputIP, "/");
+    strcpy(inputIP, token);
+
+    while(fgets(accessIDs, MAX_LENGTH, file) != NULL) { //파일의 끝까지 IP 읽어오기
         
-        if(fnmatch(accessIDs, inputIP, 0) == 0)
-            return 1;
+        if(fnmatch(accessIDs, inputIP, 0) == 0) //현재 접근 시도하는 IP가 접근 가능 권한이 있을 경우
+            return 1; //1을 반환
     }
 
     char error_message[MAX_LENGTH]; //서버의 에러 응답 메세지
     sprintf(error_message, "<h1>Access denied!</h1><br>"
                            "<h3>Your IP : %s</h3><br>"
                            "you have no permission to access this web server.<br>"
-                           "HTTP 403.6 - Forbidden: IP address reject<br>", inputIP);
-                                                                                                                       // 에러 메세지 설정
+                           "HTTP 403.6 - Forbidden: IP address reject<br>", inputIP); // 에러 메세지 설정
     sprintf(response_header, "HTTP/1.0 200 OK\r\nServer: 2023 web server\r\nContent-length: %ld\r\nContent-Type: text/html\r\n\r\n", strlen(error_message)+1); // 헤더 메세지 설정
 
     write(client_fd, response_header, strlen(response_header)+1); // 응답 메세지 헤더 write
     write(client_fd, error_message, strlen(error_message)+1);     // 에러 응답 메세지 write
-    fclose(file);
-    return 0;
+    fclose(file); //파일 close
+    return 0; //현재 접근 시도하는 IP가 접근 가능 권한이 없을 경우 0 반환
 }
 
+///////////////////////////////////////////////////////////////////////////////////////
+// printServerHistory                                                                //
+// --------------------------------------------------------------------------------- //
+// Input:                                                                            //
+// output:                                                                           //
+// purpose: Store the 10 most recent connection records. The connection record       //
+//          should include the client connection number, IP address, port number,    //
+//          process IP executed, and the time when the server and client were        //
+//          connected.                                                               //
+///////////////////////////////////////////////////////////////////////////////////////
 void printServerHistory() {
 
     printf("========= Connection History ===================================\n");    
-    printf("Number of request(s) : %d\n", request);
-    if(request > 0) {
+    printf("Number of request(s) : %d\n", request); //누적 접근 수 출력
+    if(request > 0) { //만약 1번 이상 클라이언트가 접근한 적이 있으면
         printf("No.\tIP\t\tPID\tPORT\tTIME\n");
-        for(int i = 0; i < 10; i++) {
-            printf("%d\t%s\t%d\t%d\t\n", request-(9-i), IP[i], PID[i], Port[i]);
+        for(int i = 0; i < 10; i++) { //10개의 history 출력
+            printf("%d\t%s\t%d\t%d\t\n", request-(9-i), IP[i], PID[i], Port[i]); //접근 번호, IP, PID, Port번호 출력
 
-            struct tm tm = *localtime(&TIME[i]);
+            struct tm tm = *localtime(&TIME[i]); //시간 정보 불러오기
             char buffer[80]; 
-            //strftime(buffer, 80, "%a %b %d %H:%M:%S %Y\n\n", &tm);
+            strftime(buffer, 80, "%a %b %d %H:%M:%S %Y\n\n", &tm); //시간 정보 출력
         }
     }
-    No = 0;
+    No = 0; //인덱스 0으로 돌리기
 }
 
+///////////////////////////////////////////////////////////////////////////////////////
+// saveConnectHistory                                                                //
+// --------------------------------------------------------------------------------- //
+// Input: struct sockaddr_in client_addr -> The address of the connected client.     //
+// output:                                                                           //
+// purpose: Store the 10 most recent connection records. The connection record       //
+//          should include the client connection number, IP address, port number,    //
+//          process IP executed, and the time when the server and client were        //
+//          connected.                                                               //
+///////////////////////////////////////////////////////////////////////////////////////
 void saveConnectHistory(struct sockaddr_in client_addr) {
 
-    if(No < 10) {
-        Port[No] = ntohs(client_addr.sin_port);
-        strcpy(IP[No], inet_ntoa(client_addr.sin_addr));
-        TIME[No] = time(NULL);
-        PID[No] = getpid();
-        ++No;
+    if(No < 10) { //만약 접속 기록이 아직 10개 이하라면
+        Port[No] = ntohs(client_addr.sin_port); //Port 번호 저장
+        strcpy(IP[No], inet_ntoa(client_addr.sin_addr)); //IP 저장
+        TIME[No] = time(NULL); //현재 시간 정보 저장
+        PID[No] = getpid(); //PID 저장
+        ++No; //인덱스 증가
     }
 
-    else {
-        for(int i = 0; i < 10; i++) {
+    else { //접속 기록이 10개를 넘어갈 경우
+        for(int i = 0; i < 10; i++) { //가장 오래된 기록 지우기(앞으로 한 칸씩 당기기)
             Port[i] = Port[i+1];
             strcpy(IP[i], IP[i+1]);
             TIME[i] = TIME[i+1];
             PID[i] = PID[i+1];
         }
-        Port[9] = ntohs(client_addr.sin_port);
+        Port[9] = ntohs(client_addr.sin_port); //최근 기록을 저장
         strcpy(IP[9], inet_ntoa(client_addr.sin_addr));
         TIME[9] = time(NULL);
         PID[9] = getpid();
@@ -261,9 +292,7 @@ void sendResponse(char* url, char* response_header, int isNotStart, int client_f
     if (isNotFound == 1) { //존재하지 않는 디렉토리라면
 
         char error_message[MAX_LENGTH]; //서버의 에러 응답 메세지
-        sprintf(error_message, "<h1>Not Found</h1><br>"
-                                  "The request URL %s was not found on this server<br>"
-                                  "HTTP 404 - Not Page Found", url); //에러 메세지 설정
+        sprintf(error_message, "<h1>Not Found</h1><br>The request URL %s was not found on this server<br>HTTP 404 - Not Page Found", url); //에러 메세지 설정
         sprintf(response_header, "HTTP/1.0 200 OK\r\nServer: 2023 web server\r\nContent-length: %ld\r\nContent-Type: text/html\r\n\r\n", strlen(error_message)+1); //헤더 메세지 설정
 
         write(client_fd, response_header, strlen(response_header)); //응답 메세지 헤더 write
@@ -351,6 +380,7 @@ int writeHTMLFile(char* url) {
         fprintf(file, "<h1>System Programming Http</h1>\n<br>\n"); //header 작성
         
         getAbsolutePath(url, dirPath); //dirPath에 url의 절대경로를 받아오기
+        
         if(opendir(dirPath) == NULL) //url이 디렉토리가 아니라면
             return 1; //함수 종료
 
@@ -485,15 +515,15 @@ void getAbsolutePath(char *inputPath, char *absolutePath) {
     else
         strcat(absolutePath, inputPath); //현재 경로에 입력받은 경로 이어붙이기
 
-    int i, j, len = strlen(absolutePath);
-    for (i = j = 0; i < len; i++) {
+    int i, j, len = strlen(absolutePath); //만약 /가 중복될 경우 제거하는 과정
+    for (i = j = 0; i < len; i++) { //절대 경로를 순회하면서
         if (i > 0 && absolutePath[i] == '/' && absolutePath[i-1] == '/') {
             // do nothing
         } else {
-            absolutePath[j++] = absolutePath[i];
+            absolutePath[j++] = absolutePath[i]; //'/'를 제거하기 위해 한 칸씩 앞으로 땡기기
         }
     }
-    absolutePath[j] = '\0';
+    absolutePath[j] = '\0'; //마지막 문자를 null로 하여 문자열 마무리
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
